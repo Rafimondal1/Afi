@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Trading Candlestick 1 (Bearish red candle on left) -->
+    <path
+        android:pathData="M34,44 L34,36 M34,58 L34,66"
+        android:strokeColor="#F23645"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M30,44 L38,44 L38,58 L30,58 Z"
+        android:fillColor="#F23645" />
+
+    <!-- Trading Candlestick 2 (Bullish green big candle in middle) -->
+    <path
+        android:pathData="M54,34 L54,26 M54,64 L54,72"
+        android:strokeColor="#089981"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M49,34 L59,34 L59,64 L49,64 Z"
+        android:fillColor="#089981" />
+
+    <!-- Trading Candlestick 3 (Bullish green surge candle on right) -->
+    <path
+        android:pathData="M74,38 L74,30 M74,60 L74,68"
+        android:strokeColor="#2962FF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M70,38 L78,38 L78,60 L70,60 Z"
+        android:fillColor="#2962FF" />
+
+    <!-- Trend line overlay connecting lows to high breakout -->
+    <path
+        android:pathData="M26,62 L48,50 L78,32"
+        android:strokeColor="#FAD338"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- Pulse dot on breakout -->
+    <path
+        android:pathData="M78,32m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0"
+        android:fillColor="#FFFFFF" />
+</vector>
