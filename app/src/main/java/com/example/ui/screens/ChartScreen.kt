@@ -32,6 +32,17 @@ import com.example.ui.components.ApkExportGuideDialog
 import com.example.ui.theme.*
 import java.util.Locale
 
+enum class MultiChartLayout(
+    val label: String,
+    val displayName: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    SINGLE("1x", "1 Chart (Single)", Icons.Default.CropSquare),
+    SPLIT_V("2x V", "2 Charts (Split Vertical)", Icons.Default.ViewAgenda),
+    SPLIT_H("2x H", "2 Charts (Split Horizontal)", Icons.Default.ViewWeek),
+    QUAD("4x", "4 Charts (Quad Grid Pro)", Icons.Default.GridView)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChartScreen(
@@ -55,6 +66,11 @@ fun ChartScreen(
     onStepReplayBackward: () -> Unit = {},
     onSetReplaySpeed: (Float) -> Unit = {},
     onSeekReplay: (Int) -> Unit = {},
+    isLiveMarketConnected: Boolean = true,
+    liveDataFeedSource: String = "BINANCE SPOT (REAL-TIME)",
+    lastLiveSyncTimestamp: String = "Just Now",
+    isLoadingCandles: Boolean = false,
+    onRefreshMarketData: () -> Unit = {},
     onOpenExportGuide: () -> Unit = {}
 ) {
     var chartType by remember { mutableStateOf(ChartType.CANDLESTICK) }
@@ -68,6 +84,7 @@ fun ChartScreen(
     var isDualChartLayout by remember { mutableStateOf(false) }
     var showTechnicalStatsSheet by remember { mutableStateOf(false) }
     var tradeExecutionFeedback by remember { mutableStateOf<String?>(null) }
+    var orderModalSide by remember { mutableStateOf<PositionType?>(null) }
 
     val isPositive = asset.changePercent >= 0
 
@@ -128,18 +145,28 @@ fun ChartScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        Text(
-                            text = "${asset.exchange} · ${selectedTimeframe.label}",
-                            fontSize = 10.sp,
-                            color = TvTextSecondary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isLiveMarketConnected) TvBullGreen else TvBearRed)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${asset.exchange} · ${selectedTimeframe.label} · ${if (isLiveMarketConnected) "LIVE" else "OFFLINE"}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isLiveMarketConnected) TvBullGreen else TvTextSecondary
+                            )
+                        }
                     }
                 }
 
                 // Price and nominal change
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = formatPrice(asset.price),
+                        text = formatPrice(asset.price, asset.currency),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
@@ -157,9 +184,14 @@ fun ChartScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = {
-                            val qty = if (asset.price > 1000) 0.1 else 1.0
+                            val qty = when {
+                                asset.symbol.contains("NIFTY 50") -> 25.0
+                                asset.symbol.contains("BANK NIFTY") -> 15.0
+                                asset.price > 1000 -> 0.1
+                                else -> 1.0
+                            }
                             onQuickTrade(PositionType.LONG, qty)
-                            tradeExecutionFeedback = "Bought Long $qty ${asset.symbol} @ ${formatPrice(asset.price)}"
+                            tradeExecutionFeedback = "Bought Long $qty ${asset.symbol} @ ${formatPrice(asset.price, asset.currency)}"
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = TvBullGreen),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -173,9 +205,14 @@ fun ChartScreen(
 
                     Button(
                         onClick = {
-                            val qty = if (asset.price > 1000) 0.1 else 1.0
+                            val qty = when {
+                                asset.symbol.contains("NIFTY 50") -> 25.0
+                                asset.symbol.contains("BANK NIFTY") -> 15.0
+                                asset.price > 1000 -> 0.1
+                                else -> 1.0
+                            }
                             onQuickTrade(PositionType.SHORT, qty)
-                            tradeExecutionFeedback = "Sold Short $qty ${asset.symbol} @ ${formatPrice(asset.price)}"
+                            tradeExecutionFeedback = "Sold Short $qty ${asset.symbol} @ ${formatPrice(asset.price, asset.currency)}"
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = TvBearRed),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -362,6 +399,28 @@ fun ChartScreen(
                         )
                     }
                 }
+
+                // Live Refresh / Sync button
+                IconButton(
+                    onClick = onRefreshMarketData,
+                    modifier = Modifier.size(28.dp).testTag("chart_live_refresh_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Sync Live Exchange",
+                        tint = if (isLoadingCandles) TvBrandBlueLight else TvTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Real exchange candle fetch indicator
+            AnimatedVisibility(visible = isLoadingCandles) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = TvBrandBlueLight,
+                    trackColor = TvSurfaceVariant
+                )
             }
 
             // --- 3. Drawing Tools Floating Toolbar Strip ---
@@ -662,10 +721,12 @@ private fun IndicatorToggleRow(
     }
 }
 
-private fun formatPrice(price: Double): String {
-    return when {
+private fun formatPrice(price: Double, currency: String = "USD"): String {
+    val prefix = if (currency == "INR") "₹" else "$"
+    val num = when {
         price >= 1000.0 -> String.format(Locale.US, "%,.2f", price)
         price >= 1.0 -> String.format(Locale.US, "%.2f", price)
         else -> String.format(Locale.US, "%.4f", price)
     }
+    return "$prefix$num"
 }

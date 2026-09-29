@@ -40,6 +40,9 @@ fun WatchlistScreen(
     onSelectAsset: (String) -> Unit,
     onToggleFavorite: (String) -> Unit,
     onNavigateToChart: () -> Unit,
+    isLiveMarketConnected: Boolean = true,
+    lastLiveSyncTimestamp: String = "Just Now",
+    onRefreshMarketData: () -> Unit = {},
     onOpenExportGuide: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -97,9 +100,44 @@ fun WatchlistScreen(
                                 color = Color.White
                             )
                         }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        // Real-time live status indicator
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(TvSurfaceVariant)
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isLiveMarketConnected) TvBullGreen else TvBearRed)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isLiveMarketConnected) "LIVE · $lastLiveSyncTimestamp" else "OFFLINE",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isLiveMarketConnected) TvBullGreen else TvBearRed
+                            )
+                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onRefreshMarketData,
+                            modifier = Modifier.size(28.dp).testTag("watchlist_refresh_btn")
+                        ) {
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = "Sync Live Market",
+                                tint = TvBrandBlueLight,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
@@ -374,7 +412,7 @@ private fun WatchlistRow(
             modifier = Modifier.widthIn(min = 82.dp)
         ) {
             Text(
-                text = formatAssetPrice(asset.price),
+                text = formatAssetPrice(asset.price, asset.currency),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
@@ -401,10 +439,12 @@ private fun WatchlistRow(
     }
 }
 
-private fun formatAssetPrice(price: Double): String {
-    return when {
+private fun formatAssetPrice(price: Double, currency: String = "USD"): String {
+    val prefix = if (currency == "INR") "₹" else "$"
+    val num = when {
         price >= 1000.0 -> String.format(Locale.US, "%,.2f", price)
         price >= 1.0 -> String.format(Locale.US, "%.2f", price)
         else -> String.format(Locale.US, "%.4f", price)
     }
+    return "$prefix$num"
 }

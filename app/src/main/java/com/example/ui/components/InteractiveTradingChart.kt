@@ -2,8 +2,12 @@ package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -12,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
@@ -58,7 +63,10 @@ fun InteractiveTradingChart(
 
     // Viewport control: offset (panning) and visible candle count (zoom)
     var visibleCount by remember { mutableIntStateOf(50) }
-    var scrollOffset by remember { mutableIntStateOf(0) } // 0 means latest at right
+    var scrollOffsetFloat by remember { mutableFloatStateOf(0f) }
+
+    // Mode: Pan/Zoom or Crosshair Inspect
+    var isCrosshairMode by remember { mutableStateOf(false) }
 
     // Crosshair state
     var isScrubbing by remember { mutableStateOf(false) }
@@ -69,9 +77,9 @@ fun InteractiveTradingChart(
 
     // Clamp visible range
     val totalCandles = candles.size
-    val safeVisibleCount = visibleCount.coerceIn(20, totalCandles.coerceAtLeast(20))
+    val safeVisibleCount = visibleCount.coerceIn(15, totalCandles.coerceAtLeast(15))
     val maxScroll = (totalCandles - safeVisibleCount).coerceAtLeast(0)
-    val safeScroll = scrollOffset.coerceIn(0, maxScroll)
+    val safeScroll = scrollOffsetFloat.roundToInt().coerceIn(0, maxScroll)
 
     // Window of candles to render: from (total - safeVisibleCount - safeScroll) to (total - safeScroll)
     val startIndex = (totalCandles - safeVisibleCount - safeScroll).coerceAtLeast(0)
@@ -88,7 +96,12 @@ fun InteractiveTradingChart(
         // --- 1. Top HUD / Legend Bar (OHLCV & Indicator Values) ---
         ChartHeaderLegend(
             candle = currentDisplayCandle,
-            indicators = indicators
+            indicators = indicators,
+            isHistorical = selectedCandle != null,
+            onDismissSelection = {
+                selectedCandle = null
+                isScrubbing = false
+            }
         )
 
         // --- 2. Main Interactive Chart Canvas Area ---
@@ -101,58 +114,117 @@ fun InteractiveTradingChart(
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("interactive_chart_canvas")
-                    .pointerInput(visibleCandles.size, activeDrawingTool) {
-                        detectTapGestures(
-                            onTap = { tapOffset ->
-                                if (activeDrawingTool == DrawingTool.HORIZONTAL_LINE) {
-                                    // Calculate price from Y tap
-                                    val (minPrice, maxPrice) = calculatePriceRange(visibleCandles)
-                                    val price = yToPrice(tapOffset.y, size.height.toFloat() * 0.75f, minPrice, maxPrice)
-                                    onAddHorizontalLine(price)
-                                } else {
-                                    // Toggle or hide crosshair
-                                    if (isScrubbing) {
-                                        isScrubbing = false
-                                        selectedCandle = null
-                                    } else {
-                                        isScrubbing = true
-                                        crosshairOffset = tapOffset
+                    .pointerInput(visibleCandles.size, activeDrawingTool, isCrosshairMode) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val startOffset = down.position
+                            var currentOffset = down.position
+                            var isTransforming = false
+                            var isMultiTouch = false
+                            val startTime = System.currentTimeMillis()
+
+                            val canvasW = size.width
+                            val canvasH = size.height
+                            val priceScaleW = 60.dp.toPx()
+                            val timeScaleH = 24.dp.toPx()
+                            val chartW = canvasW - priceScaleW
+                            val chartH = canvasH - timeScaleH
+                            val subPaneCount = (if (indicators.showRsi) 1 else 0) + (if (indicators.showMacd) 1 else 0)
+                            val subPaneH = if (subPaneCount > 0) chartH * (0.16f * subPaneCount) else 0f
+                            val mainChartH = chartH - subPaneH
+                            val barW = (chartW / visibleCandles.size).coerceAtLeast(1f)
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pressedPointers = event.changes.filter { it.pressed }
+                                if (pressedPointers.isEmpty()) {
+                                    // Pointer released
+                                    val totalDuration = System.currentTimeMillis() - startTime
+                                    val totalDistance = (currentOffset - startOffset).getDistance()
+
+                                    if (!isTransforming && !isMultiTouch && totalDistance < 15f && totalDuration < 400L) {
+                                        if (activeDrawingTool == DrawingTool.HORIZONTAL_LINE) {
+                                            val (minP, maxP) = calculatePriceRange(visibleCandles)
+                                            val pricePadding = (maxP - minP) * 0.08
+                                            val plotMinP = minP - pricePadding
+                                            val plotMaxP = maxP + pricePadding
+                                            val price = yToPrice(startOffset.y, mainChartH, plotMinP, plotMaxP)
+                                            onAddHorizontalLine(price)
+                                        } else if (startOffset.x in 0f..chartW && startOffset.y in 0f..chartH) {
+                                            val idx = (startOffset.x / barW).toInt().coerceIn(0, visibleCandles.size - 1)
+                                            if (isScrubbing && selectedCandle == visibleCandles[idx]) {
+                                                isScrubbing = false
+                                                selectedCandle = null
+                                            } else {
+                                                isScrubbing = true
+                                                selectedCandle = visibleCandles[idx]
+                                                crosshairOffset = Offset(idx * barW + barW / 2, startOffset.y.coerceIn(0f, mainChartH))
+                                            }
+                                        }
+                                    }
+                                    break
+                                }
+
+                                if (pressedPointers.size >= 2) {
+                                    isMultiTouch = true
+                                    isTransforming = true
+                                    val p0 = pressedPointers[0].position
+                                    val p1 = pressedPointers[1].position
+                                    val prevP0 = pressedPointers[0].previousPosition
+                                    val prevP1 = pressedPointers[1].previousPosition
+                                    val prevDist = (prevP0 - prevP1).getDistance()
+                                    val currentDist = (p0 - p1).getDistance()
+                                    if (prevDist > 1f) {
+                                        val zoom = currentDist / prevDist
+                                        if (zoom > 0.05f && zoom < 20f) {
+                                            visibleCount = (visibleCount / zoom).roundToInt().coerceIn(15, totalCandles.coerceAtLeast(15))
+                                        }
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                } else if (pressedPointers.size == 1 && !isMultiTouch) {
+                                    val pointer = pressedPointers[0]
+                                    val prevPos = pointer.previousPosition
+                                    currentOffset = pointer.position
+                                    val dx = currentOffset.x - prevPos.x
+                                    val distFromStart = (currentOffset - startOffset).getDistance()
+
+                                    if (distFromStart > 10f) {
+                                        isTransforming = true
+                                        if (isCrosshairMode || isScrubbing) {
+                                            isScrubbing = true
+                                            val newX = currentOffset.x.coerceIn(0f, chartW)
+                                            val newY = currentOffset.y.coerceIn(0f, chartH)
+                                            val idx = (newX / barW).toInt().coerceIn(0, visibleCandles.size - 1)
+                                            selectedCandle = visibleCandles[idx]
+                                            crosshairOffset = Offset(idx * barW + barW / 2, newY)
+                                        } else {
+                                            // Smooth horizontal pan
+                                            val deltaBars = dx / barW
+                                            scrollOffsetFloat = (scrollOffsetFloat + deltaBars).coerceIn(0f, maxScroll.toFloat())
+                                            if (isScrubbing) {
+                                                isScrubbing = false
+                                                selectedCandle = null
+                                            }
+                                        }
+                                        pointer.consume()
+                                    } else if (!isTransforming && (System.currentTimeMillis() - startTime > 380L)) {
+                                        // Long press triggered
+                                        if (startOffset.x in 0f..chartW && startOffset.y in 0f..chartH) {
+                                            isScrubbing = true
+                                            val idx = (startOffset.x / barW).toInt().coerceIn(0, visibleCandles.size - 1)
+                                            selectedCandle = visibleCandles[idx]
+                                            crosshairOffset = Offset(idx * barW + barW / 2, startOffset.y.coerceIn(0f, mainChartH))
+                                        }
                                     }
                                 }
                             }
-                        )
-                    }
-                    .pointerInput(visibleCandles.size) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                isScrubbing = true
-                                crosshairOffset = offset
-                            },
-                            onDragEnd = {
-                                isScrubbing = false
-                                selectedCandle = null
-                            },
-                            onDragCancel = {
-                                isScrubbing = false
-                                selectedCandle = null
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                if (isScrubbing) {
-                                    crosshairOffset = change.position
-                                } else {
-                                    // Horizontal scroll drag
-                                    val step = (dragAmount.x / 14f).toInt()
-                                    scrollOffset = (scrollOffset + step).coerceIn(0, maxScroll)
-                                }
-                            }
-                        )
+                        }
                     }
             ) {
                 val canvasW = size.width
                 val canvasH = size.height
 
-                // Reserve right 58.dp for Y-axis price scale, bottom 24.dp for X-axis time scale
+                // Reserve right 60.dp for Y-axis price scale, bottom 24.dp for X-axis time scale
                 val priceScaleW = 60.dp.toPx()
                 val timeScaleH = 24.dp.toPx()
 
@@ -214,7 +286,7 @@ fun InteractiveTradingChart(
                     )
                 }
 
-                // 4. Draw Moving Averages (EMA 20, 50, 200)
+                // 4. Draw Moving Averages (EMA 20, 50, 200, VWAP)
                 if (indicators.showEma20) {
                     drawEmaLine(visibleCandles, { it.ema20 }, TvBrandBlue, 2.dp.toPx(), barW, mainChartH, plotMinP, priceRange)
                 }
@@ -324,7 +396,7 @@ fun InteractiveTradingChart(
                     )
                 }
 
-                // 8. Draw Y-Axis Price Scale Labels on Right Rail
+                // 8. Draw Y-Axis Price Scale Labels on Right Rail & Live Price Horizontal Line
                 drawPriceScaleRail(
                     chartW = chartW,
                     priceScaleW = priceScaleW,
@@ -332,6 +404,7 @@ fun InteractiveTradingChart(
                     minPrice = plotMinP,
                     maxPrice = plotMaxP,
                     lastPrice = visibleCandles.last().close,
+                    isBullish = visibleCandles.last().close >= visibleCandles.last().open,
                     textMeasurer = textMeasurer
                 )
 
@@ -345,7 +418,7 @@ fun InteractiveTradingChart(
                     textMeasurer = textMeasurer
                 )
 
-                // 10. Draw Interactive Crosshair if scrubbing
+                // 10. Draw Interactive Crosshair if scrubbing / inspecting
                 if (isScrubbing && crosshairOffset.x in 0f..chartW && crosshairOffset.y in 0f..chartH) {
                     val candleIdx = (crosshairOffset.x / barW).toInt().coerceIn(0, visibleCandles.size - 1)
                     val candle = visibleCandles[candleIdx]
@@ -402,14 +475,36 @@ fun InteractiveTradingChart(
                 }
             }
 
-            // Quick Zoom Controls in Floating Corner
+            // Quick Zoom & Interactive Mode Controls in Floating Corner
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 12.dp, bottom = 32.dp)
-                    .background(TvDarkSurface.copy(alpha = 0.85f), RoundedCornerShape(8.dp))
-                    .padding(4.dp)
+                    .padding(start = 10.dp, bottom = 28.dp)
+                    .background(TvDarkSurface.copy(alpha = 0.92f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // Mode toggle: Pan vs Crosshair
+                IconButton(
+                    onClick = {
+                        isCrosshairMode = !isCrosshairMode
+                        if (!isCrosshairMode) {
+                            isScrubbing = false
+                            selectedCandle = null
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isCrosshairMode) Icons.Default.FilterCenterFocus else Icons.Default.PanTool,
+                        contentDescription = if (isCrosshairMode) "Crosshair Mode" else "Pan Mode",
+                        tint = if (isCrosshairMode) TvBrandBlueLight else TvTextSecondary,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+
+                VerticalDivider(modifier = Modifier.height(16.dp).padding(horizontal = 2.dp), color = TvBorderColor)
+
                 IconButton(
                     onClick = { visibleCount = (visibleCount - 10).coerceAtLeast(15) },
                     modifier = Modifier.size(32.dp)
@@ -424,12 +519,36 @@ fun InteractiveTradingChart(
                 }
                 IconButton(
                     onClick = {
-                        scrollOffset = 0
+                        scrollOffsetFloat = 0f
                         visibleCount = 50
+                        selectedCandle = null
+                        isScrubbing = false
                     },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(Icons.Default.Replay, contentDescription = "Reset Chart", tint = TvTextPrimary, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            // "Jump to Live Bar" Floating Button when user has panned back into history
+            if (safeScroll > 0) {
+                Button(
+                    onClick = {
+                        scrollOffsetFloat = 0f
+                        selectedCandle = null
+                        isScrubbing = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TvBrandBlue),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 68.dp, bottom = 28.dp)
+                        .height(30.dp)
+                ) {
+                    Icon(Icons.Default.FastForward, contentDescription = "Jump to Live", tint = Color.White, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("LIVE ($safeScroll)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }
@@ -765,6 +884,7 @@ private fun DrawScope.drawPriceScaleRail(
     minPrice: Double,
     maxPrice: Double,
     lastPrice: Double,
+    isBullish: Boolean,
     textMeasurer: TextMeasurer
 ) {
     // Rail separator line
@@ -784,18 +904,36 @@ private fun DrawScope.drawPriceScaleRail(
         )
     }
 
-    // Active Last Price Badge
+    // Active Last Price Level & Badge
     val lastY = priceToY(lastPrice, mainChartH, minPrice, range).coerceIn(10f, mainChartH - 10f)
+    val badgeColor = if (isBullish) TvBullGreen else TvBearRed
+
+    // Horizontal dashed live price line across the whole main chart canvas (TradingView signature)
+    drawLine(
+        color = badgeColor.copy(alpha = 0.75f),
+        start = Offset(0f, lastY),
+        end = Offset(chartW, lastY),
+        strokeWidth = 1.2.dp.toPx(),
+        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+    )
+
+    // Pinned Badge on right rail
     drawRect(
-        color = TvBullGreen,
-        topLeft = Offset(chartW, lastY - 10.dp.toPx()),
-        size = Size(priceScaleW, 20.dp.toPx())
+        color = badgeColor,
+        topLeft = Offset(chartW, lastY - 11.dp.toPx()),
+        size = Size(priceScaleW, 22.dp.toPx())
+    )
+    // Pulsing live tick dot inside badge
+    drawCircle(
+        color = Color.White,
+        radius = 2.dp.toPx(),
+        center = Offset(chartW + 6.dp.toPx(), lastY)
     )
     drawText(
         textMeasurer = textMeasurer,
         text = formatPrice(lastPrice),
-        topLeft = Offset(chartW + 4.dp.toPx(), lastY - 7.dp.toPx()),
-        style = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        topLeft = Offset(chartW + 11.dp.toPx(), lastY - 7.dp.toPx()),
+        style = TextStyle(color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
     )
 }
 
@@ -825,7 +963,9 @@ private fun DrawScope.drawTimeScale(
 @Composable
 private fun ChartHeaderLegend(
     candle: Candle,
-    indicators: IndicatorConfig
+    indicators: IndicatorConfig,
+    isHistorical: Boolean = false,
+    onDismissSelection: (() -> Unit)? = null
 ) {
     val isBull = candle.close >= candle.open
     val color = if (isBull) TvBullGreen else TvBearRed
@@ -838,6 +978,44 @@ private fun ChartHeaderLegend(
             .background(TvDarkSurface)
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
+        // If inspecting a historical bar: show clear banner & dismiss action
+        if (isHistorical) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .background(TvBrandBlue.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "INSPECTING: ${candle.timeLabel}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TvBrandBlueLight
+                        )
+                    }
+                }
+                if (onDismissSelection != null) {
+                    Text(
+                        text = "✕ Back to Live",
+                        color = TvTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { onDismissSelection() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+        }
+
         // OHLCV Row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -859,7 +1037,7 @@ private fun ChartHeaderLegend(
         }
 
         // Active Indicators Value summary
-        if (indicators.showEma20 || indicators.showEma50 || indicators.showBollinger) {
+        if (indicators.showEma20 || indicators.showEma50 || indicators.showBollinger || indicators.showVwap) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -874,6 +1052,9 @@ private fun ChartHeaderLegend(
                 }
                 if (indicators.showBollinger && candle.bbUpper != null) {
                     Text("BB(20,2): ${formatPrice(candle.bbUpper)}", color = TvOrange.copy(alpha = 0.8f), fontSize = 10.sp)
+                }
+                if (indicators.showVwap && candle.vwap != null) {
+                    Text("VWAP: ${formatPrice(candle.vwap)}", color = TvGold, fontSize = 10.sp)
                 }
             }
         }

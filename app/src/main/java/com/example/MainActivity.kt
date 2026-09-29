@@ -60,9 +60,21 @@ fun MainApp(repository: MarketRepository = remember { MarketRepository() }) {
     // Bar Replay / Backtest Engine state
     val isReplayMode by repository.isReplayMode.collectAsStateWithLifecycle()
     val isReplayPlaying by repository.isReplayPlaying.collectAsStateWithLifecycle()
+    val isReplayTotalBars by repository.replayTotalBars.collectAsStateWithLifecycle()
     val replayIndex by repository.replayIndex.collectAsStateWithLifecycle()
     val replayTotalBars by repository.replayTotalBars.collectAsStateWithLifecycle()
     val replaySpeed by repository.replaySpeed.collectAsStateWithLifecycle()
+
+    // Real-time live market telemetry
+    val isLiveMarketConnected by repository.isLiveMarketConnected.collectAsStateWithLifecycle()
+    val liveDataFeedSource by repository.liveDataFeedSource.collectAsStateWithLifecycle()
+    val lastLiveSyncTimestamp by repository.lastLiveSyncTimestamp.collectAsStateWithLifecycle()
+    val isLoadingCandles by repository.isLoadingCandles.collectAsStateWithLifecycle()
+
+    // Broker Integration (Paper Trading vs Dhan Broker vs Multi-Broker)
+    val activeBroker by repository.activeBroker.collectAsStateWithLifecycle()
+    val dhanAccount by repository.dhanAccount.collectAsStateWithLifecycle()
+    val connectedBrokers by repository.connectedBrokers.collectAsStateWithLifecycle()
 
     val technicalAnalysis = remember(selectedAsset.symbol, currentCandles) {
         repository.getTechnicalAnalysis(selectedAsset.symbol)
@@ -131,6 +143,9 @@ fun MainApp(repository: MarketRepository = remember { MarketRepository() }) {
                         onSelectAsset = { repository.selectAsset(it) },
                         onToggleFavorite = { repository.toggleFavorite(it) },
                         onNavigateToChart = { selectedTab = 1 },
+                        isLiveMarketConnected = isLiveMarketConnected,
+                        lastLiveSyncTimestamp = lastLiveSyncTimestamp,
+                        onRefreshMarketData = { repository.refreshMarketData() },
                         onOpenExportGuide = { showExportGuideDialog = true }
                     )
                     1 -> ChartScreen(
@@ -161,6 +176,11 @@ fun MainApp(repository: MarketRepository = remember { MarketRepository() }) {
                         onStepReplayBackward = { repository.stepReplayBackward() },
                         onSetReplaySpeed = { repository.setReplaySpeed(it) },
                         onSeekReplay = { repository.jumpReplayTo(it) },
+                        isLiveMarketConnected = isLiveMarketConnected,
+                        liveDataFeedSource = liveDataFeedSource,
+                        lastLiveSyncTimestamp = lastLiveSyncTimestamp,
+                        isLoadingCandles = isLoadingCandles,
+                        onRefreshMarketData = { repository.refreshMarketData() },
                         onOpenExportGuide = { showExportGuideDialog = true }
                     )
                     2 -> PaperTradingScreen(
@@ -169,6 +189,14 @@ fun MainApp(repository: MarketRepository = remember { MarketRepository() }) {
                         tradeHistory = tradeHistory,
                         assets = assets,
                         selectedAsset = selectedAsset,
+                        activeBroker = activeBroker,
+                        dhanAccount = dhanAccount,
+                        connectedBrokers = connectedBrokers,
+                        onSelectBroker = { repository.selectBroker(it) },
+                        onConnectDhan = { id, pin -> repository.connectDhanAccount(id, pin) },
+                        onDisconnectDhan = { repository.disconnectDhanAccount() },
+                        onConnectBroker = { type, id, token -> repository.connectBroker(type, id, token) },
+                        onDisconnectBroker = { repository.disconnectBroker(it) },
                         onPlaceOrder = { sym, type, qty, lev, sl, tp ->
                             repository.placePaperOrder(sym, type, qty, lev, sl, tp)
                         },

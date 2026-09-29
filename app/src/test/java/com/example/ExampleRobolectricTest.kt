@@ -18,4 +18,27 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("TradeView Pro", appName)
   }
+
+  @Test
+  fun `test Binance klines fetch`() = kotlinx.coroutines.runBlocking {
+    val candles = com.example.data.api.RealMarketApiService.fetchBinanceKlines("BTCUSDT", com.example.model.Timeframe.MIN_1, 10)
+    println("Binance BTC candles count: ${candles.size}")
+    if (candles.isNotEmpty()) {
+      println("Latest BTC candle close: ${candles.last().close}")
+    }
+  }
+
+  @Test
+  fun `test Yahoo GC=F fetch`() = kotlinx.coroutines.runBlocking {
+    val (ticker, candles) = com.example.data.api.RealMarketApiService.fetchYahooChart("GC=F", com.example.model.Timeframe.MIN_15)
+    println("Yahoo GC=F ticker: $ticker")
+    println("Yahoo GC=F candles count: ${candles.size}")
+  }
+
+  @Test
+  fun `test Yahoo NSEI fetch`() = kotlinx.coroutines.runBlocking {
+    val (ticker, candles) = com.example.data.api.RealMarketApiService.fetchYahooChart("^NSEI", com.example.model.Timeframe.MIN_15)
+    println("Yahoo ^NSEI ticker: $ticker")
+    println("Yahoo ^NSEI candles count: ${candles.size}")
+  }
 }

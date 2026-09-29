@@ -2,11 +2,12 @@ package com.example.model
 
 enum class AssetClass(val displayName: String) {
     ALL("All"),
+    INDIA("India (NSE)"),
     CRYPTO("Crypto"),
-    STOCKS("Stocks"),
     FOREX("Forex"),
-    INDICES("Indices"),
-    COMMODITIES("Commodities")
+    COMMODITIES("Gold & Comm"),
+    STOCKS("US Stocks"),
+    INDICES("Indices")
 }
 
 enum class ChartType(val displayName: String) {
@@ -63,6 +64,7 @@ data class MarketAsset(
     val volume24h: String,
     val marketCap: String,
     val sparkline: List<Double>,
+    val currency: String = "USD", // "INR" or "USD"
     val technicalRating: TechnicalRating = TechnicalRating.BUY,
     val isFavorite: Boolean = false,
     val lastUpdateDirection: Int = 0 // 1 for up (green flash), -1 for down (red flash), 0 neutral
@@ -101,22 +103,25 @@ data class IndicatorConfig(
     val showVwap: Boolean = false
 )
 
-enum class DrawingTool {
-    NONE,
-    HORIZONTAL_LINE,
-    TRENDLINE,
-    FIB_RETRACEMENT
+enum class DrawingTool(val displayName: String) {
+    NONE("Cursor"),
+    HORIZONTAL_LINE("H-Line"),
+    TRENDLINE("Trendline"),
+    SUPPORT_RESISTANCE("Support/Resistance")
 }
 
 data class DrawnHorizontalLine(
     val price: Double,
-    val label: String
+    val label: String,
+    val id: String = java.util.UUID.randomUUID().toString().take(6),
+    val color: Long = 0xFF2962FF
 )
 
-data class DrawnTrendline(
-    val startXRatio: Float,
+data class DrawnTrendLine(
+    val id: String,
+    val startTime: Long,
     val startPrice: Double,
-    val endXRatio: Float,
+    val endTime: Long,
     val endPrice: Double
 )
 
@@ -160,7 +165,8 @@ data class PaperTrade(
     val takeProfit: Double? = null,
     val openTimestamp: Long = System.currentTimeMillis(),
     val isClosed: Boolean = false,
-    val closePrice: Double? = null
+    val closePrice: Double? = null,
+    val currency: String = "USD"
 ) {
     val margin: Double
         get() = (entryPrice * quantity) / leverage
@@ -178,6 +184,45 @@ data class PaperTrade(
     val pnlPercent: Double
         get() = if (margin > 0) (pnl / margin) * 100.0 else 0.0
 }
+
+enum class BrokerType(
+    val title: String,
+    val subtitle: String = "",
+    val shortName: String = "",
+    val isOfficialPartner: Boolean = false,
+    val defaultCurrency: String = "USD"
+) {
+    PAPER_TRADING("Paper Trading ($100k USD)", "Simulated trading by TradingView", "Paper", false, "USD"),
+    DHAN_BROKER("Dhan Connect (₹2.5L INR)", "Official TradingView India Partner · NSE/BSE/MCX", "Dhan", true, "INR"),
+    ZERODHA_BROKER("Zerodha Kite", "Kite Connect v3 · India NSE", "Zerodha", false, "INR"),
+    ANGEL_ONE("Angel One", "SmartAPI Integration · India", "Angel One", false, "INR"),
+    BINANCE_BROKER("Binance Futures", "Crypto Spot & USDT-M Futures API", "Binance", false, "USD"),
+    INTERACTIVE_BROKERS("Interactive Brokers", "Global Equities, Options & Futures", "IBKR", false, "USD")
+}
+
+data class ConnectedBrokerAccount(
+    val brokerType: BrokerType,
+    val isConnected: Boolean = false,
+    val accountId: String = "",
+    val accountName: String = "Trading Account",
+    val apiKeyOrToken: String = "",
+    val availableCash: Double = 100000.0,
+    val collateralMargin: Double = 50000.0,
+    val usedMargin: Double = 0.0,
+    val currency: String = "USD",
+    val connectionStatus: String = "Not Connected"
+)
+
+data class DhanAccount(
+    val isConnected: Boolean = false,
+    val clientId: String = "",
+    val clientName: String = "Trader",
+    val availableCash: Double = 250000.0, // ₹2,50,000 INR
+    val collateralMargin: Double = 150000.0,
+    val usedMargin: Double = 0.0,
+    val portfolioValue: Double = 485000.0,
+    val brokerStatus: String = "Active (Dhan TradingView Direct)"
+)
 
 data class TradingIdea(
     val id: String,
